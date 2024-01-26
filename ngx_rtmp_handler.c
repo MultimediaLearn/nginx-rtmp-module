@@ -208,8 +208,8 @@ ngx_rtmp_recv(ngx_event_t *rev)
     c = rev->data;
     s = c->data;
     b = NULL;
-    old_pos = NULL;
-    old_size = 0;
+    old_pos = NULL;     // 上次未处理数据位置
+    old_size = 0;       // 上次未处理数据的大小
     cscf = ngx_rtmp_get_module_srv_conf(s, ngx_rtmp_core_module);
 
     if (c->destroyed) {
@@ -222,6 +222,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
 
         /* allocate new buffer */
         if (st->in == NULL) {
+            // 为类型为 ngx_chain_t 的结构体指针 st->in 分配内存
             st->in = ngx_rtmp_alloc_in_buf(s);
             if (st->in == NULL) {
                 ngx_log_error(NGX_LOG_INFO, c->log, 0,
@@ -236,12 +237,14 @@ ngx_rtmp_recv(ngx_event_t *rev)
         b  = in->buf;
 
         if (old_size) {
-
+            // 本次接收有剩余没处理完
             ngx_log_debug1(NGX_LOG_DEBUG_RTMP, c->log, 0,
                     "reusing formerly read data: %d", old_size);
 
             b->pos = b->start;
 
+            /* 对上一次接收到的数据按一个 chunk size 进行切分之后，
+             * 余下的多余的数据再次循环时进行重新使用 */
             size = ngx_min((size_t) (b->end - b->start), old_size);
             b->last = ngx_movemem(b->pos, old_pos, size);
 
@@ -252,9 +255,12 @@ ngx_rtmp_recv(ngx_event_t *rev)
         } else {
 
             if (old_pos) {
+                // 上一次的数据刚好处理完，重置 buffer
                 b->pos = b->last = b->start;
             }
 
+            /* 这里调用的回调函数为 ngx_unix_recv 方法接收数据 */
+            // 向 last 位置追加数据
             n = c->recv(c, b->last, b->end - b->last);
 
             if (n == NGX_ERROR || n == 0) {
@@ -263,6 +269,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
             }
 
             if (n == NGX_AGAIN) {
+                // 添加读事件，等待继续处理
                 if (ngx_handle_read_event(c->read, 0) != NGX_OK) {
                     ngx_rtmp_finalize_session(s);
                 }
@@ -271,9 +278,10 @@ ngx_rtmp_recv(ngx_event_t *rev)
 
             s->ping_reset = 1;
             ngx_rtmp_update_bandwidth(&ngx_rtmp_bw_in, n);
-            b->last += n;
+            b->last += n; /* 更新缓存区范围指针 */
             s->in_bytes += n;
 
+            // Flash Media Live Encoder (FMLE)
             if (s->in_bytes >= 0xf0000000) {
                 ngx_log_debug0(NGX_LOG_DEBUG_RTMP, c->log, 0,
                                "resetting byte counter");
@@ -282,6 +290,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
             }
 
             if (s->ack_size && s->in_bytes - s->in_last_ack >= s->ack_size) {
+                // 回复 ack
 
                 s->in_last_ack = s->in_bytes;
 
@@ -374,6 +383,7 @@ ngx_rtmp_recv(ngx_event_t *rev)
                      *  big-endian 3b -> little-endian 4b
                      * type:
                      *  1b -> 1b*/
+                    // h->mlen = xxx
                     pp = (u_char*)&h->mlen;
                     pp[2] = *p++;
                     pp[1] = *p++;
@@ -438,31 +448,45 @@ ngx_rtmp_recv(ngx_event_t *rev)
             }
         }
 
+        /* b->last： 指向本次recv到的数据的尾部
+         * b->pos:   指向rtmp trunk的实际data起始
+         * 因此，size为本次接收到的实际数据的大小
+         */
         size = b->last - b->pos;
+        /* h->mlen：该RTMP message的长度
+         * st->len：该分片的长度
+         * fsize 为message 缺乏的大小
+         */
         fsize = h->mlen - st->len;
 
         if (size < ngx_min(fsize, s->in_chunk_size))
             continue;
 
         /* buffer is ready */
+        // size >= fsize OR size >= s->in_chunk_size
 
+        /* 本次所要接收的 rtmp message 的大小大于 s->in_shunk_size 块的大小
+         * 因此要进行切分 */
         if (fsize > s->in_chunk_size) {
             /* collect fragmented chunks */
             st->len += s->in_chunk_size;
             b->last = b->pos + s->in_chunk_size;
             old_pos = b->last;
+            /* 切分一个块后余下的数据大小 */
             old_size = size - s->in_chunk_size;
 
         } else {
+            /* 完整接收一个 rtmp message 后，进行处理 */
             /* handle! */
             head = st->in->next;
             st->in->next = NULL;
             b->last = b->pos + fsize;
             old_pos = b->last;
             old_size = size - fsize;
-            st->len = 0;
+            st->len = 0;        // 重置 st->len
             h->timestamp += st->dtime;
 
+            /* 根据该 rtmp 消息的类型调用相应的回调函数进行处理 */
             if (ngx_rtmp_receive_message(s, h, head) != NGX_OK) {
                 ngx_rtmp_finalize_session(s);
                 return;
@@ -515,6 +539,7 @@ ngx_rtmp_send(ngx_event_t *wev)
         ngx_del_timer(wev);
     }
 
+    // out 是链表数组，每次发送一个链表节点
     if (s->out_chain == NULL && s->out_pos != s->out_last) {
         s->out_chain = s->out[s->out_pos];
         s->out_bpos = s->out_chain->buf->pos;
@@ -845,6 +870,8 @@ ngx_rtmp_set_chunk_size(ngx_rtmp_session_t *s, ngx_uint_t size)
              * for all streams except for the current one
              * (which caused this chunk size change);
              * we can simply ignore it */
+            // 环形链表，in 指向最后一个元素，该元素作为head 其 next 链表首个元素
+            // 1 -> 2 -> 3(head) -> 1
             li = s->in_streams[n].in;
             if (li == NULL || li->next == NULL) {
                 s->in_streams[n].in = NULL;
@@ -867,6 +894,7 @@ ngx_rtmp_set_chunk_size(ngx_rtmp_session_t *s, ngx_uint_t size)
                             bi->last - bi->pos);
                     li = li->next;
                     if (li == fli)  {
+                        // 当前流处理结束，(head = last) -> first
                         lo->next = flo;
                         s->in_streams[n].in = lo;
                         break;
@@ -889,6 +917,9 @@ ngx_rtmp_set_chunk_size(ngx_rtmp_session_t *s, ngx_uint_t size)
 }
 
 
+/*
+ * 等待前一个 chunk 接收完再调用该函数。
+*/
 static ngx_int_t
 ngx_rtmp_finalize_set_chunk_size(ngx_rtmp_session_t *s)
 {

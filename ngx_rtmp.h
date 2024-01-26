@@ -165,18 +165,18 @@ typedef struct {
 typedef struct {
     uint32_t                csid;       /* chunk stream id */
     uint32_t                timestamp;  /* timestamp (delta) */
-    uint32_t                mlen;       /* message length */
+    uint32_t                mlen;       /* message length 带在协议头里面 */
     uint8_t                 type;       /* message type id */
     uint32_t                msid;       /* message stream id */
 } ngx_rtmp_header_t;
 
 
 typedef struct {
-    ngx_rtmp_header_t       hdr;
+    ngx_rtmp_header_t       hdr;        // rtmp header
     uint32_t                dtime;
     uint32_t                len;        /* current fragment length */
     uint8_t                 ext;
-    ngx_chain_t            *in;
+    ngx_chain_t            *in;         // rtmp 数据原始数据
 } ngx_rtmp_stream_t;
 
 
@@ -248,7 +248,7 @@ typedef struct {
 
     ngx_rtmp_stream_t      *in_streams;
     uint32_t                in_csid;
-    ngx_uint_t              in_chunk_size;
+    ngx_uint_t              in_chunk_size;      // 输入 chunk size
     ngx_pool_t             *in_pool;
     uint32_t                in_bytes;
     uint32_t                in_last_ack;
@@ -261,13 +261,13 @@ typedef struct {
     /* circular buffer of RTMP message pointers */
     ngx_msec_t              timeout;
     uint32_t                out_bytes;
-    size_t                  out_pos, out_last;
-    ngx_chain_t            *out_chain;
-    u_char                 *out_bpos;
+    size_t                  out_pos, out_last;  // 数组索引当前位置和索引结尾
+    ngx_chain_t            *out_chain;          // 当前发送链表
+    u_char                 *out_bpos;           // 当前链表节点发送位置
     unsigned                out_buffer:1;
     size_t                  out_queue;
     size_t                  out_cork;
-    ngx_chain_t            *out[0];
+    ngx_chain_t            *out[0];             // 链表数组
 } ngx_rtmp_session_t;
 
 
@@ -318,7 +318,7 @@ typedef struct ngx_rtmp_core_srv_conf_s {
 
     ngx_uint_t              ack_window;
 
-    ngx_int_t               chunk_size;
+    ngx_int_t               chunk_size;         // 输出 chunk size
     ngx_pool_t             *pool;
     ngx_chain_t            *free;
     ngx_chain_t            *free_hs;
