@@ -768,7 +768,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
 
     csidx = !(lacf->interleave || h->type == NGX_RTMP_MSG_VIDEO);
 
-    cs  = &ctx->cs[csidx];
+    cs  = &ctx->cs[csidx];  // interleave 和 视频，都是用视频
 
     ngx_memzero(&ch, sizeof(ch));
 
@@ -787,7 +787,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
     clh.type = (h->type == NGX_RTMP_MSG_AUDIO ? NGX_RTMP_MSG_VIDEO :
                                                 NGX_RTMP_MSG_AUDIO);
 
-    cs->active = 1;
+    cs->active = 1;     // 上行chunk stream 默认设置激活
     cs->timestamp = ch.timestamp;
 
     delta = ch.timestamp - lh.timestamp;
@@ -821,7 +821,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
                 ngx_rtmp_is_codec_header(in))
             {
                 prio = 0;
-                mandatory = 1;
+                mandatory = 1;  // inline header，该包非 active 不发送
             }
 
         } else {
@@ -835,7 +835,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
                 ngx_rtmp_is_codec_header(in))
             {
                 prio = 0;
-                mandatory = 1;
+                mandatory = 1;  // inline header，该包非 active 不发送
             }
         }
 
@@ -853,7 +853,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
         }
 
         ss = pctx->session;
-        cs = &pctx->cs[csidx];
+        cs = &pctx->cs[csidx]; // 下行的 chunk stream
 
         /* send metadata */
 
@@ -872,7 +872,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
             ngx_log_debug2(NGX_LOG_DEBUG_RTMP, ss->connection->log, 0,
                            "live: sync %s dropped=%uD", type_s, cs->dropped);
 
-            cs->active = 0;
+            cs->active = 0;     // sync 失败，重启发送
             cs->dropped = 0;
         }
 
@@ -881,9 +881,10 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
         if (!cs->active) {
 
             if (mandatory) {
+                // inline header，数据包不单独发送，等数据来了通过 header 发送
                 ngx_log_debug0(NGX_LOG_DEBUG_RTMP, ss->connection->log, 0,
                                "live: skipping header");
-                continue;
+                continue; // 跳过当前包
             }
 
             if (lacf->wait_video && h->type == NGX_RTMP_MSG_AUDIO &&
@@ -914,7 +915,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
             }
 
             if (header || coheader) {
-
+                // 通过 header 发送
                 /* send absolute codec header */
 
                 ngx_log_debug2(NGX_LOG_DEBUG_RTMP, ss->connection->log, 0,
@@ -953,7 +954,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
                 ss->current_time = cs->timestamp;
 
             } else {
-
+                // 通过 真实数据包 发送
                 /* send absolute packet */
 
                 ngx_log_debug2(NGX_LOG_DEBUG_RTMP, ss->connection->log, 0,
@@ -983,6 +984,7 @@ ngx_rtmp_live_av(ngx_rtmp_session_t *s, ngx_rtmp_header_t *h,
                 continue;
             }
         }
+        // 后续再来的 header 会直接当成数据包发送
 
         /* send relative packet */
 

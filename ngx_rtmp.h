@@ -176,7 +176,7 @@ typedef struct {
     uint32_t                dtime;
     uint32_t                len;        /* current fragment length */
     uint8_t                 ext;
-    ngx_chain_t            *in;         // rtmp 数据原始数据
+    ngx_chain_t            *in;         // rtmp 数据原始数据，环形链表
 } ngx_rtmp_stream_t;
 
 
