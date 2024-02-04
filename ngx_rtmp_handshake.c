@@ -361,6 +361,7 @@ ngx_rtmp_handshake_done(ngx_rtmp_session_t *s)
     ngx_log_debug0(NGX_LOG_DEBUG_RTMP, s->connection->log, 0,
             "handshake: done");
 
+    // 触发 handshake_done 事件，当前relay 有注册处理函数，开始relay 工作
     if (ngx_rtmp_fire_event(s, NGX_RTMP_HANDSHAKE_DONE,
                 NULL, NULL) != NGX_OK)
     {
@@ -396,12 +397,13 @@ ngx_rtmp_handshake_recv(ngx_event_t *rev)
     }
 
     if (rev->timer_set) {
-        ngx_del_timer(rev);
+        ngx_del_timer(rev); // 数据到达，删除读超时定时器
     }
 
     b = s->hs_buf;
 
     while (b->last != b->end) {
+        // ngx_unix_recv()
         n = c->recv(c, b->last, b->end - b->last);
 
         if (n == NGX_ERROR || n == 0) {
@@ -421,12 +423,12 @@ ngx_rtmp_handshake_recv(ngx_event_t *rev)
     }
 
     if (rev->active) {
-        ngx_del_event(rev, NGX_READ_EVENT, 0);
+        ngx_del_event(rev, NGX_READ_EVENT, 0);  // 事件处理中，暂时删除
     }
 
-    ++s->hs_stage;
+    ++s->hs_stage;  // 状态切换
     ngx_log_debug1(NGX_LOG_DEBUG_RTMP, s->connection->log, 0,
-            "handshake: stage %ui", s->hs_stage);
+            "handshake: stage %ui in recv", s->hs_stage);
 
     switch (s->hs_stage) {
         case NGX_RTMP_HANDSHAKE_SERVER_SEND_CHALLENGE:
@@ -539,9 +541,9 @@ ngx_rtmp_handshake_send(ngx_event_t *wev)
         ngx_del_event(wev, NGX_WRITE_EVENT, 0);
     }
 
-    ++s->hs_stage;
+    ++s->hs_stage;  // 状态切换
     ngx_log_debug1(NGX_LOG_DEBUG_RTMP, s->connection->log, 0,
-            "handshake: stage %ui", s->hs_stage);
+            "handshake: stage %ui in send", s->hs_stage);
 
     switch (s->hs_stage) {
         case NGX_RTMP_HANDSHAKE_SERVER_SEND_RESPONSE:
@@ -576,11 +578,13 @@ ngx_rtmp_handshake_send(ngx_event_t *wev)
 }
 
 
+// server 握手入口函数
 void
 ngx_rtmp_handshake(ngx_rtmp_session_t *s)
 {
     ngx_connection_t           *c;
 
+    // rtmp 握手初始化
     c = s->connection;
     c->read->handler =  ngx_rtmp_handshake_recv;
     c->write->handler = ngx_rtmp_handshake_send;
